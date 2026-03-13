@@ -1,0 +1,75 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  /* Custom Scrollbar Styles */
+  ::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #f8fafc;
+    border-radius: 6px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 6px;
+    border: 3px solid #f8fafc;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+  }
+
+  /* For Firefox */
+  * {
+    scrollbar-width: auto;
+    scrollbar-color: #cbd5e1 #f8fafc;
+  }
+}
+
+@layer base {
+  body {
+    @apply font-sans antialiased text-slate-800 dark:text-slate-200;
+  }
+  
+  button, 
+  [role="button"],
+  select,
+  input[type="checkbox"],
+  input[type="radio"] {
+    @apply cursor-pointer;
+  }
+
+  input[type="text"],
+  input[type="password"],
+  input[type="email"],
+  textarea {
+    @apply cursor-text;
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #E2E8F0;
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #CBD5E1;
+}
