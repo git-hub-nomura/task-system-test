@@ -9,7 +9,7 @@ services:
     name: taskboard
     runtime: node
     plan: free
-    buildCommand: npm install && npm run build && npm run migrate && npm run seed
+    buildCommand: npm install --include=dev && npm run build && npm run migrate && npm run seed
     startCommand: npm run start
     envVars:
       - key: NODE_ENV
