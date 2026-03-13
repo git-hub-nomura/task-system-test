@@ -1,0 +1,22 @@
+databases:
+  - name: taskboard-db
+    plan: free
+    databaseName: taskboard
+    user: taskboard
+
+services:
+  - type: web
+    name: taskboard
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build && npm run migrate && npm run seed
+    startCommand: npm run start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: taskboard-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true

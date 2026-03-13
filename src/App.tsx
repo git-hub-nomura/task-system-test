@@ -56,6 +56,7 @@ import {
 } from 'recharts';
 import { Priority, Status, Task, Assignee, Project, Column } from './types';
 import { INITIAL_ASSIGNEES, INITIAL_TASKS, INITIAL_PROJECTS, INITIAL_COLUMNS } from './constants';
+import * as api from './api';
 
 // --- Helpers ---
 const getTodayStr = () => new Date().toISOString().split('T')[0];
@@ -133,14 +134,15 @@ export default function App() {
 }
 
 function AppContent() {
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(!!api.getToken());
+  const [isLoading, setIsLoading] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [tasks, setTasks] = useState<Task[]>(INITIAL_TASKS);
-  const [projects, setProjects] = useState<Project[]>(INITIAL_PROJECTS);
-  const [columns, setColumns] = useState<Column[]>(INITIAL_COLUMNS);
-  const [assignees, setAssignees] = useState<Assignee[]>(INITIAL_ASSIGNEES);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [columns, setColumns] = useState<Column[]>([]);
+  const [assignees, setAssignees] = useState<Assignee[]>([]);
   const [selectedAssigneeId, setSelectedAssigneeId] = useState<string | null>(null);
-  const [selectedProjectId, setSelectedProjectId] = useState<string>(INITIAL_PROJECTS[0].id);
+  const [selectedProjectId, setSelectedProjectId] = useState<string>('');
   const [activeTab, setActiveTab] = useState<'dashboard' | 'board' | 'gantt' | 'analytics' | 'settings'>('dashboard');
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [isAddingTask, setIsAddingTask] = useState<string | null>(null); // columnId
@@ -180,6 +182,43 @@ function AppContent() {
     return '#4F46E5';
   });
 
+  // ログイン後にAPIからデータを一括取得
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    setIsLoading(true);
+    Promise.all([
+      api.getProjects(),
+      api.getColumns(),
+      api.getTasks(),
+      api.getAssignees(),
+      api.getSettings(),
+    ])
+      .then(([proj, cols, tsk, asgn, settings]) => {
+        setProjects(proj);
+        setColumns(cols);
+        setTasks(tsk);
+        setAssignees(asgn);
+        if (proj.length > 0 && !selectedProjectId) {
+          setSelectedProjectId(proj[0].id);
+        }
+        // 設定を反映
+        setTheme(settings.theme);
+        setThemeColor(settings.themeColor);
+        setLanguage(settings.language);
+        setNotifications({
+          push: settings.notifyPush,
+          email: settings.notifyEmail,
+          weekly: settings.notifyWeekly,
+        });
+      })
+      .catch((err) => {
+        console.error('データ取得エラー:', err);
+        // トークン無効の場合はログアウト
+        if (!api.getToken()) setIsLoggedIn(false);
+      })
+      .finally(() => setIsLoading(false));
+  }, [isLoggedIn]);
+
   // Warning Popup States
   const [showUnassignedWarning, setShowUnassignedWarning] = useState(true);
   const [showUpcomingWarning, setShowUpcomingWarning] = useState(true);
@@ -191,13 +230,15 @@ function AppContent() {
     return () => clearInterval(timer);
   }, []);
 
-  // Persist Settings
+  // Persist Settings (localStorage + API)
   useEffect(() => {
     localStorage.setItem('theme', theme);
+    if (isLoggedIn) api.updateSettings({ theme }).catch(() => {});
   }, [theme]);
 
   useEffect(() => {
     localStorage.setItem('themeColor', themeColor);
+    if (isLoggedIn) api.updateSettings({ themeColor }).catch(() => {});
   }, [themeColor]);
 
   // Apply Theme and Theme Color
@@ -234,99 +275,111 @@ function AppContent() {
   }, [theme, themeColor]);
 
   // --- Actions ---
-  const addTask = (columnId: string) => {
-    const column = columns.find(c => c.id === columnId);
-    const newTask: Task = {
-      id: Math.random().toString(36).substr(2, 9),
-      title: '新しいタスク',
-      startDate: getTodayStr(),
-      dueDate: getTodayStr(),
-      priority: Priority.MEDIUM,
-      status: Status.NOT_STARTED,
-      memo: '',
-      assigneeIds: [],
-      columnId,
-      projectId: selectedProjectId,
-    };
-    setTasks([...tasks, newTask]);
-    setEditingTask(newTask);
+  const addTask = async (columnId: string) => {
+    try {
+      const newTask = await api.createTask({
+        title: '新しいタスク',
+        startDate: getTodayStr(),
+        dueDate: getTodayStr(),
+        priority: Priority.MEDIUM,
+        status: Status.NOT_STARTED,
+        memo: '',
+        assigneeIds: [],
+        columnId,
+        projectId: selectedProjectId,
+      });
+      setTasks([...tasks, newTask]);
+      setEditingTask(newTask);
+    } catch (err) { console.error('タスク追加エラー:', err); }
   };
 
-  const updateTask = (updatedTask: Task) => {
-    setTasks(tasks.map(t => t.id === updatedTask.id ? updatedTask : t));
-    setEditingTask(null);
+  const updateTask = async (updatedTask: Task) => {
+    try {
+      const saved = await api.updateTask(updatedTask.id, updatedTask);
+      setTasks(tasks.map(t => t.id === saved.id ? saved : t));
+      setEditingTask(null);
+    } catch (err) { console.error('タスク更新エラー:', err); }
   };
 
-  const deleteTask = (id: string) => {
-    setTasks(tasks.filter(t => t.id !== id));
-    setEditingTask(null);
+  const deleteTask = async (id: string) => {
+    try {
+      await api.deleteTask(id);
+      setTasks(tasks.filter(t => t.id !== id));
+      setEditingTask(null);
+    } catch (err) { console.error('タスク削除エラー:', err); }
   };
 
-  const addAssignee = (name: string, color: string) => {
-    const newAssignee: Assignee = {
-      id: Math.random().toString(36).substr(2, 9),
-      name,
-      avatar: name.split(' ')[0] || name,
-      color: color || `hsl(${Math.random() * 360}, 70%, 50%)`,
-    };
-    setAssignees([...assignees, newAssignee]);
-    setIsAddingAssignee(false);
+  const addAssignee = async (name: string, color: string) => {
+    try {
+      const newAssignee = await api.createAssignee({ name, color: color || undefined });
+      setAssignees([...assignees, newAssignee]);
+      setIsAddingAssignee(false);
+    } catch (err) { console.error('担当者追加エラー:', err); }
   };
 
-  const updateAssignee = (id: string, name: string, color: string) => {
-    setAssignees(assignees.map(a => a.id === id ? { ...a, name, color, avatar: name.split(' ')[0] || name } : a));
-    setEditingAssigneeId(null);
+  const updateAssignee = async (id: string, name: string, color: string) => {
+    try {
+      const saved = await api.updateAssignee(id, { name, color });
+      setAssignees(assignees.map(a => a.id === id ? saved : a));
+      setEditingAssigneeId(null);
+    } catch (err) { console.error('担当者更新エラー:', err); }
   };
 
-  const addProject = (name: string, color?: string) => {
-    const newProject: Project = {
-      id: Math.random().toString(36).substr(2, 9),
-      name,
-      color: color || `hsl(${Math.random() * 360}, 70%, 50%)`,
-      notes: '',
-    };
-    setProjects([...projects, newProject]);
-    setIsAddingProject(false);
-    setSelectedProjectId(newProject.id);
+  const addProject = async (name: string, color?: string) => {
+    try {
+      const newProject = await api.createProject({ name, color: color || undefined });
+      setProjects([...projects, newProject]);
+      setIsAddingProject(false);
+      setSelectedProjectId(newProject.id);
+    } catch (err) { console.error('プロジェクト追加エラー:', err); }
   };
 
-  const removeProject = (id: string) => {
+  const removeProject = async (id: string) => {
     if (projects.length <= 1) return;
-    setProjects(projects.filter(p => p.id !== id));
-    setTasks(tasks.filter(t => t.projectId !== id));
-    if (selectedProjectId === id) {
-      setSelectedProjectId(projects.find(p => p.id !== id)!.id);
-    }
+    try {
+      await api.deleteProject(id);
+      setProjects(projects.filter(p => p.id !== id));
+      setColumns(columns.filter(c => c.projectId !== id));
+      setTasks(tasks.filter(t => t.projectId !== id));
+      if (selectedProjectId === id) {
+        setSelectedProjectId(projects.find(p => p.id !== id)!.id);
+      }
+    } catch (err) { console.error('プロジェクト削除エラー:', err); }
   };
 
-  const removeAssignee = (id: string) => {
-    setAssignees(assignees.filter(a => a.id !== id));
-    setTasks(tasks.map(t => ({
-      ...t,
-      assigneeIds: t.assigneeIds.filter(aid => aid !== id)
-    })));
+  const removeAssignee = async (id: string) => {
+    try {
+      await api.deleteAssignee(id);
+      setAssignees(assignees.filter(a => a.id !== id));
+      setTasks(tasks.map(t => ({
+        ...t,
+        assigneeIds: t.assigneeIds.filter(aid => aid !== id)
+      })));
+    } catch (err) { console.error('担当者削除エラー:', err); }
   };
 
-  const addColumn = (title: string, color?: string) => {
-    const newColumn: Column = {
-      id: Math.random().toString(36).substr(2, 9),
-      title,
-      projectId: selectedProjectId,
-      order: columns.filter(c => c.projectId === selectedProjectId).length,
-      color: color || '#4F46E5',
-    };
-    setColumns([...columns, newColumn]);
-    setIsAddingColumn(false);
+  const addColumn = async (title: string, color?: string) => {
+    try {
+      const newColumn = await api.createColumn({ title, projectId: selectedProjectId, color: color || undefined });
+      setColumns([...columns, newColumn]);
+      setIsAddingColumn(false);
+    } catch (err) { console.error('カラム追加エラー:', err); }
   };
 
-  const deleteColumn = (id: string) => {
-    setColumns(columns.filter(c => c.id !== id));
-    setTasks(tasks.filter(t => t.columnId !== id));
+  const deleteColumn = async (id: string) => {
+    try {
+      await api.deleteColumn(id);
+      setColumns(columns.filter(c => c.id !== id));
+      setTasks(tasks.filter(t => t.columnId !== id));
+    } catch (err) { console.error('カラム削除エラー:', err); }
   };
 
-  const renameColumn = (id: string, newTitle: string, color?: string) => {
-    setColumns(columns.map(c => c.id === id ? { ...c, title: newTitle, color } : c));
-    setEditingColumnId(null);
+  const renameColumn = async (id: string, newTitle: string, color?: string) => {
+    try {
+      const saved = await api.updateColumn(id, { title: newTitle, color });
+      setColumns(columns.map(c => c.id === id ? saved : c));
+      setEditingColumnId(null);
+    } catch (err) { console.error('カラム名変更エラー:', err); }
   };
 
   const toggleSort = (columnId: string) => {
@@ -359,12 +412,20 @@ function AppContent() {
     setDropTargetColumn(columnId);
   };
 
-  const handleDrop = (e: React.DragEvent, columnId: string) => {
+  const handleDrop = async (e: React.DragEvent, columnId: string) => {
     e.preventDefault();
     const taskId = e.dataTransfer.getData('taskId');
     const task = tasks.find(t => t.id === taskId);
     if (task && task.columnId !== columnId) {
+      // 楽観的更新
       setTasks(tasks.map(t => t.id === taskId ? { ...t, columnId } : t));
+      try {
+        await api.updateTask(taskId, { columnId });
+      } catch (err) {
+        // 失敗時はロールバック
+        setTasks(tasks.map(t => t.id === taskId ? { ...t, columnId: task.columnId } : t));
+        console.error('タスク移動エラー:', err);
+      }
     }
     setDropTargetColumn(null);
   };
@@ -444,8 +505,33 @@ function AppContent() {
 
   const currentProject = projects.find(p => p.id === selectedProjectId) || projects[0];
 
+  const handleLogin = () => {
+    setIsLoggedIn(true);
+  };
+
+  const handleLogout = () => {
+    api.setToken(null);
+    setIsLoggedIn(false);
+    setProjects([]);
+    setColumns([]);
+    setTasks([]);
+    setAssignees([]);
+    setSelectedProjectId('');
+  };
+
   if (!isLoggedIn) {
-    return <Login onLogin={() => setIsLoggedIn(true)} />;
+    return <Login onLogin={handleLogin} />;
+  }
+
+  if (isLoading || projects.length === 0) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
+        <div className="text-center">
+          <div className="w-16 h-16 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-slate-500 dark:text-slate-400 font-bold">データを読み込み中...</p>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -725,7 +811,7 @@ function AppContent() {
               <span>設定</span>
             </button>
             <button
-              onClick={() => setIsLoggedIn(false)}
+              onClick={handleLogout}
               className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-red-500 hover:bg-red-50 transition-all mt-1"
             >
               <LogOut size={18} />
@@ -1046,7 +1132,7 @@ function AppContent() {
             <AnalyticsView data={analyticsData} />
           ) : (
             <SettingsView 
-              onLogout={() => setIsLoggedIn(false)}
+              onLogout={handleLogout}
               theme={theme}
               setTheme={setTheme}
               language={language}
@@ -2413,13 +2499,19 @@ function Login({ onLogin }: { onLogin: () => void }) {
   const [id, setId] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (id === 'admin' && password === 'admin') {
+    setError('');
+    setLoading(true);
+    try {
+      await api.login(id, password);
       onLogin();
-    } else {
+    } catch {
       setError('IDまたはパスワードが正しくありません');
+    } finally {
+      setLoading(false);
     }
   };
 
